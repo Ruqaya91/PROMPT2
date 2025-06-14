@@ -1,48 +1,53 @@
 from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
+from flask_mysqldb import MySQL
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///users.db"
-db = SQLAlchemy(app)
 
-# User model
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    password_hash = db.Column(db.String(128), nullable=False)
+# Configure MySQL
+app.config['MYSQL_HOST'] = 'localhost'
+app.config['MYSQL_USER'] = 'your_mysql_user'
+app.config['MYSQL_PASSWORD'] = 'your_mysql_password'
+app.config['MYSQL_DB'] = 'flask_auth'
 
-# Create the database
-with app.app_context():
-    db.create_all()
+mysql = MySQL(app)
 
-@app.route("/register", methods=["POST"])
+@app.route('/register', methods=['POST'])
 def register():
     data = request.json
-    username = data.get("username")
-    password = data.get("password")
+    username = data.get('username')
+    password = data.get('password')
+
     if not username or not password:
         return jsonify({"error": "Username and password required"}), 400
 
-    if User.query.filter_by(username=username).first():
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT id FROM users WHERE username = %s", (username,))
+    if cur.fetchone():
         return jsonify({"error": "Username already exists"}), 409
 
-    hashed_pw = generate_password_hash(password)
-    new_user = User(username=username, password_hash=hashed_pw)
-    db.session.add(new_user)
-    db.session.commit()
+    password_hash = generate_password_hash(password)
+    cur.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s)", (username, password_hash))
+    mysql.connection.commit()
+    cur.close()
+
     return jsonify({"message": "User registered successfully."}), 201
 
-@app.route("/login", methods=["POST"])
+@app.route('/login', methods=['POST'])
 def login():
     data = request.json
-    username = data.get("username")
-    password = data.get("password")
-    user = User.query.filter_by(username=username).first()
-    if user and check_password_hash(user.password_hash, password):
+    username = data.get('username')
+    password = data.get('password')
+
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT password_hash FROM users WHERE username = %s", (username,))
+    result = cur.fetchone()
+    cur.close()
+
+    if result and check_password_hash(result[0], password):
         return jsonify({"message": "Login successful."}), 200
     else:
-        return jsonify({"error": "Invalid credentials."}), 401
+        return jsonify({"error": "Invalid username or password."}), 401
 
 if __name__ == "__main__":
     app.run(debug=True)
